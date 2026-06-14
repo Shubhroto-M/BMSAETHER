@@ -1,18 +1,20 @@
 # COMET 30: 5S Smart Telemetry BMS (120A Peak)
-**Aerospace-Grade Engineering | KiCad Design Contest 2026**
+**Aerospace-Grade Defensive Engineering | KiCad Design Contest 2026**
 
-The COMET 30 is a 5S lithium battery management system engineered for extreme duty cycles. It utilizes a dual-layer safety architecture: raw hardware-level protection provided by the BM3451 + BQ7718XX and tertiary software-defined nukes managed by an ESP32.
+Most Battery Management Systems are built on hope. The COMET 30 is built on paranoia. 
+
+Designed for high-stress 5S lithium packs, this board features a triple-redundant architecture that separates high-speed analog reflexes from digital telemetry. It utilizes a custom "Split-Highway" topology, hardware-level fault latching, an intelligent Wi-Fi ESP32 OS with RTC-persistent energy tracking, and a physical chemical fuse that permanently bricks the battery in the event of catastrophic component failure.
 
 ---
 
 ## ⚙️ Technical Specification Summary
-
 | Parameter | Configuration | Value/Spec |
 | :--- | :--- | :--- |
+| **Topology** | Split-Highway | Low-Side Switching + Dedicated High-Side SCP |
 | **Max Continuous Current** | OC1 Threshold | 30A |
 | **Max Transient Peak** | OC2 Threshold | 120A |
 | **Short Circuit Limit** | Hardware Cutoff | 240A |
-| **Charge Cutoff Temp** | Hardware Threshold | ~64.5°C |
+| **Charge Cutoff Temp** | Hardware Threshold | ~64.5 deg C |
 | **Active Balance Current** | Per Cell | ~457mA |
 
 ---
@@ -116,8 +118,7 @@ Assuming a standard PCB mounting environment without active cooling:
 * **Thermal Impact:** Negligible. The massive thermal mass of the DFN5 package easily absorbs the 36.7W, 2ms pulse without approaching critical junction temperatures.
 
 
-# TPSM65630 Power Module Configuration: Numeric Calculations
-
+# TPSM65630 Power Module Configuration:
 This document defines the resistor divider values for the TPSM65630 (or equivalent TPSM656x0 family) hardware undervoltage lockout (UVLO) and hysteresis, ensuring the BMS prevents battery over-discharge.
 
 ## 1.0 Hardware UVLO Configuration
@@ -157,3 +158,23 @@ Ensures the ESP32 GPIO signals can effectively disable the discharge path during
 * **Base Current (I_b):** (3.3V - 0.7V) / 1 kOhm = 2.6mA
 * **Collector Sink Capability:** With a typical β of 100, the NPN can sink up to 260mA, effectively pulling the gate node to GND to force MOSFETs into the OFF state.
 * **Fail-Safe Logic:** In the event of GPIO floating (sleep/reboot), R3 pulls the base to GND within nanoseconds, ensuring the system returns to its default state.
+
+
+
+
+
+## 💻 The COMET OS (Firmware Features)
+
+* **RTC Persistent Memory:** The ESP32 enters Deep Sleep when current draw drops below 50mA. Cumulative data (Total mAh consumed, Uptime, Sleep time) is stored in the `RTC_DATA_ATTR` domain so it survives CPU shutdown.
+* **Hardware Wakeup:** The INA226 is programmed via I2C registers to pull `GPIO27` LOW when current flows, triggering the ESP32 `ext0` wakeup routine instantly.
+* **Asynchronous Web Server:** The ESP32 broadcasts a JSON endpoint (`/telemetry`) at 10Hz over the `COMET_BMS` network, delivering Live Pack Voltage, Current, Power (W), SoC, and arrays of individual cell voltages and temperatures to ground control.
+* **Remote Override:** Hitting the `/kill` endpoint via Wi-Fi triggers the Soft-Kill NPN transistor.
+
+### Pinout Reference
+* **GPIO21:** I2C SDA (400kHz Fast Mode)
+* **GPIO22:** I2C SCL
+* **GPIO25:** SOFT_KILL (NPN Base)
+* **GPIO26:** NUKE_GPIO (Dexerials Fuse Trigger)
+* **GPIO27:** INA_ALERT (Deep Sleep Wakeup Interrupt)
+* **GPIO32-36:** NTC Thermistors (ADC1 Only)
+
