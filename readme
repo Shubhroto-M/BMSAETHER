@@ -1,58 +1,60 @@
 # COMET 30: 5S Smart Telemetry BMS (120A Peak)
-**Aerospace-Grade Defensive Engineering | KiCad Design Contest 2026**
+**Aerospace-Grade Engineering | KiCad Design Contest 2026**
 
-The Vanguard 25 is a 5S lithium battery management system engineered for extreme duty cycles. It utilizes a dual-layer safety architecture: raw hardware-level protection provided by the BM3451 and tertiary software-defined nukes managed by an ESP32.
+The COMET 30 is a 5S lithium battery management system engineered for extreme duty cycles. It utilizes a dual-layer safety architecture: raw hardware-level protection provided by the BM3451 + BQ7718XX and tertiary software-defined nukes managed by an ESP32.
 
 ---
 
 ## ⚙️ Technical Specification Summary
+
 | Parameter | Configuration | Value/Spec |
 | :--- | :--- | :--- |
-| **Max Continuous Current** | OC1 Threshold | $30\text{A}$ |
-| **Max Transient Peak** | OC2 Threshold | $120\text{A}$ |
-| **Short Circuit Limit** | Hardware Cutoff | $240\text{A}$ |
-| **Charge Cutoff Temp** | Hardware Threshold | $\sim64.5^{\circ}\text{C}$ |
-| **Active Balance Current** | Per Cell | $\sim457\text{mA}$ |
+| **Max Continuous Current** | OC1 Threshold | 30A |
+| **Max Transient Peak** | OC2 Threshold | 120A |
+| **Short Circuit Limit** | Hardware Cutoff | 240A |
+| **Charge Cutoff Temp** | Hardware Threshold | ~64.5°C |
+| **Active Balance Current** | Per Cell | ~457mA |
 
 ---
 
 ## 🛠 Hardware Configuration Parameters
 
-### 1. Current Sense Network ($R_{sense}$)
-To achieve the $30\text{A}$ continuous limit (OC1 @ $0.100\text{V}$), the shunt network is calculated as:
-$$R_{sense} = \frac{V_{OC1}}{I_{OC1}} = \frac{0.100\text{V}}{30\text{A}} = 0.00333\Omega \text{ } (3.33\text{m}\Omega)$$
-* **Implementation:** Three (3) $10\text{m}\Omega$ precision shunt resistors placed in parallel.
-* **Safety Limits:** * OC1 ($30\text{A}$): $0.100\text{V}$ threshold.
-    * OC2 ($120\text{A}$): $0.400\text{V}$ threshold.
-    * Short Circuit ($240\text{A}$): $0.800\text{V}$ threshold.
+### 1. Current Sense Network (R_sense)
+To achieve the 30A continuous limit (OC1 @ 0.100V), the shunt network is calculated as:
+R_sense = V_OC1 / I_OC1 = 0.100V / 30A = 0.00333 Ohm (3.33 mOhm)
+
+* **Implementation:** Three (3) 10 mOhm precision shunt resistors placed in parallel.
+* **Safety Limits:** * OC1 (30A): 0.100V threshold.
+    * OC2 (120A): 0.400V threshold.
+    * Short Circuit (240A): 0.800V threshold.
 
 ### 2. Fault Timing & Delay Network
 To prevent nuisance tripping, the following capacitor network is utilized for the BM3451 delay pins:
-* **Overcharge Delay ($T_{OV}$):** $0.22\mu\text{F}$ ($\sim2.2\text{s}$)
-* **Over-discharge Delay ($T_{OVD}$):** $0.1\mu\text{F}$ ($1.0\text{s}$)
-* **Discharge Overcurrent 1 Delay ($T_{OC1}$):** $1.5\mu\text{F}$ ($3.0\text{s}$)
-* **Discharge Overcurrent 2 Delay ($T_{OC2}$):** $10\text{nF}$ ($2\text{ms}$)
+* **Overcharge Delay (T_OV):** 0.22uF (~2.2s)
+* **Over-discharge Delay (T_OVD):** 0.1uF (1.0s)
+* **Discharge Overcurrent 1 Delay (T_OC1):** 1.5uF (3.0s)
+* **Discharge Overcurrent 2 Delay (T_OC2):** 10nF (2ms)
 
 ### 3. Thermal Protection Network
-Configured for an MF52D103F3950 NTC thermistor ($R_{25}=10\text{k}\Omega, B=3950\text{K}$).
-* **Reference Resistor ($R_{TRH}$):** $4.22\text{k}\Omega$ (1% E96).
-* **Charge Cutoff:** $\sim64.5^{\circ}\text{C}$ (Derived from $R_T$ at target temperature).
-* **Discharge Hardware Cutoff:** $\sim83.8^{\circ}\text{C}$.
+Configured for an MF52D103F3950 NTC thermistor (R_25 = 10kOhm, B = 3950K).
+* **Reference Resistor (R_TRH):** 4.22 kOhm (1% E96).
+* **Charge Cutoff:** ~64.5°C (Derived from R_T at target temperature).
+* **Discharge Hardware Cutoff:** ~83.8°C.
 
 ### 4. Active Balancing Network
 Utilizes a resistive bleed architecture to manage cell voltage drift.
-* **Network ($R_{BAL}$):** Two (2) $18\Omega$ resistors in parallel per cell.
-* **Performance:** $457\text{mA}$ balancing current at $4.120\text{V}$.
-* **Dissipation:** $1.88\text{W}$ total thermal load (0.94W per resistor).
-* **Component Spec:** 1225 wide-terminal package, minimum $2\text{W}$ power rating.
+* **Network (R_BAL):** Two (2) 18 Ohm resistors in parallel per cell.
+* **Performance:** 457mA balancing current at 4.120V.
+* **Dissipation:** 1.88W total thermal load (0.94W per resistor).
+* **Component Spec:** 1225 wide-terminal package, minimum 2W power rating.
 
 ---
 
 ## 🔌 System Architecture & Interlocks
 
-* **Primary Safety (BM3451):** Handles $OC/SC/OV/UV$ detection via hard-wired analog logic.
+* **Primary Safety (BM3451):** Handles OC/SC/OV/UV detection via hard-wired analog logic.
 * **Secondary Logic (ESP32):** Provides I2C telemetry (INA226 current, Dual ADS1115 voltage). Monitors 5x NTC thermistors.
-* **The "Nuke" (Tertiary):** BQ771807 or ESP32 GPIO ($PIN\_NUKE$) triggers an A03400A N-FET to blow a **Dexerials SFK-2045** chemical fuse in the event of MOSFET gate failure or prolonged 120A shorts.
+* **The "Nuke" (Tertiary):** BQ771807 or ESP32 GPIO (PIN_NUKE) triggers an A03400A N-FET to blow a **Dexerials SFK-2045** chemical fuse in the event of MOSFET gate failure or prolonged 120A shorts.
 
 ---
 
@@ -65,10 +67,10 @@ Uses 4-pin FTDI interface. **Must use 3.3V logic level.**
 ### Pre-Flight Precautions
 1. **Ground Isolation:** Maintain strict physical separation between `Power_GND` and `Signal_GND` planes. Connect only at the shunt reference point.
 2. **Fuse Caution:** Leave the Dexerials SFK-2045 fuse **un-soldered** during all bench testing.
-3. **Copper Weight:** Board design requires **2oz copper**. 1oz copper will experience catastrophic thermal failure under the $120\text{A}$ transient load.
+3. **Copper Weight:** Board design requires **2oz copper**. 1oz copper will experience catastrophic thermal failure under the 120A transient load.
 
 
-# Vanguard 25 MOSFET Power Stage: Analysis & Thermal Calculations
+# COMET 30 MOSFET Power Stage: Analysis & Thermal Calculations
 
 This document details the performance and thermal parameters for the parallel MOSFET array utilized in the discharge and charge paths.
 
@@ -152,6 +154,6 @@ Ensures the ESP32 GPIO signals can effectively disable the discharge path during
 * **R3 (Base-to-GND Pull-down):** 10 kOhm
 
 ### 2.2 Drive Capability
-* **Base Current (I_b):** (3.3V - 0.7V) / 1kOhm = 2.6mA
+* **Base Current (I_b):** (3.3V - 0.7V) / 1 kOhm = 2.6mA
 * **Collector Sink Capability:** With a typical β of 100, the NPN can sink up to 260mA, effectively pulling the gate node to GND to force MOSFETs into the OFF state.
 * **Fail-Safe Logic:** In the event of GPIO floating (sleep/reboot), R3 pulls the base to GND within nanoseconds, ensuring the system returns to its default state.
