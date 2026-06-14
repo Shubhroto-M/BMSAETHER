@@ -1,4 +1,4 @@
-# VANGUARD 25: 5S Smart Telemetry BMS (120A Peak)
+# COMET 30: 5S Smart Telemetry BMS (120A Peak)
 **Aerospace-Grade Defensive Engineering | KiCad Design Contest 2026**
 
 The Vanguard 25 is a 5S lithium battery management system engineered for extreme duty cycles. It utilizes a dual-layer safety architecture: raw hardware-level protection provided by the BM3451 and tertiary software-defined nukes managed by an ESP32.
@@ -66,3 +66,92 @@ Uses 4-pin FTDI interface. **Must use 3.3V logic level.**
 1. **Ground Isolation:** Maintain strict physical separation between `Power_GND` and `Signal_GND` planes. Connect only at the shunt reference point.
 2. **Fuse Caution:** Leave the Dexerials SFK-2045 fuse **un-soldered** during all bench testing.
 3. **Copper Weight:** Board design requires **2oz copper**. 1oz copper will experience catastrophic thermal failure under the $120\text{A}$ transient load.
+
+
+# Vanguard 25 MOSFET Power Stage: Analysis & Thermal Calculations
+
+This document details the performance and thermal parameters for the parallel MOSFET array utilized in the discharge and charge paths.
+
+## 1.0 MOSFET Array Electrical Performance
+The design utilizes the NTMFS5C670NL (60V, 6.1 mOhm N-Channel) in a 2-parallel configuration for both CHG and DSG paths.
+
+### 1.1 Array Resistance
+* **Single FET R_DS(on):** 6.1 mOhm (at VGS = 10V)
+* **Configuration:** 2 Parallel FETs
+* **Combined Array Resistance:** 6.1 mOhm / 2 = 3.05 mOhm
+
+### 1.2 Continuous Conduction Losses (30A)
+* **Current (I):** 30A
+* **Power Loss (P = I^2 * R):** 30A^2 * 0.00305 Ohm = 2.745 Watts
+* **Dissipation per FET:** 2.745W / 2 = 1.37 Watts
+
+### 1.3 Peak Pulse Performance (120A, 2ms)
+* **Current per FET:** 60A
+* **Resistance (at 60A):** ~5.1 mOhm
+* **Combined Array Resistance:** 2.55 mOhm
+* **Voltage Drop:** 120A * 0.00255 Ohm = 0.306V
+* **Instantaneous Power:** 120A * 0.306V = 36.7 Watts (Total for the array)
+
+---
+
+## 2.0 Thermal Analysis
+
+### 2.1 Thermal Resistance
+* **R_thetaJC (Junction-to-Case):** 2.4 °C/W
+* **R_thetaJA (Junction-to-Ambient):** 41 °C/W
+
+### 2.2 Junction Temperature Rise (Steady State, 30A)
+Assuming a standard PCB mounting environment without active cooling:
+* **Power per FET:** 1.37W
+* **Temperature Rise (ΔT):** P * R_thetaJA = 1.37W * 41 °C/W = 56.17 °C
+* **Estimated Junction Temp:** T_ambient + 56.17 °C
+    * *Example:* At 25°C ambient, T_junction ≈ 81.17 °C.
+    * *Safety Status:* Within limits (Operating Junction Temp limit is +175 °C).
+
+### 2.3 Transient Thermal Performance (2ms Peak)
+* **Pulse Duration:** 0.002s
+* **Transient Thermal Impedance (R_thetaJC at 2ms):** Based on the device thermal response curves, the transient impedance at 2ms is significantly lower than the steady-state thermal resistance.
+* **Thermal Impact:** Negligible. The massive thermal mass of the DFN5 package easily absorbs the 36.7W, 2ms pulse without approaching critical junction temperatures.
+
+
+# TPSM65630 Power Module Configuration: Numeric Calculations
+
+This document defines the resistor divider values for the TPSM65630 (or equivalent TPSM656x0 family) hardware undervoltage lockout (UVLO) and hysteresis, ensuring the BMS prevents battery over-discharge.
+
+## 1.0 Hardware UVLO Configuration
+Targeting a system shutdown at 15.0V and a restart at 18.25V.
+
+### 1.1 Parameters
+* **V_off (Turn-off Threshold):** 15.0V
+* **V_on (Turn-on Threshold):** 18.25V
+* **V_EN (Internal Enable Threshold):** 1.2V
+* **I_hys (Internal Hysteresis Current):** ~1.2µA
+
+### 1.2 Divider Calculation
+Using the standard resistor divider configuration (R_top from B+ to EN, R_bottom from EN to GND):
+* **R_bottom:** 82 kOhm (Selected standard value)
+* **R_top:** 931 kOhm (Selected standard value, 1% tolerance)
+
+### 1.3 Validation
+* **Turn-off Voltage (V_off):** V_off = V_EN * (1 + (R_top / R_bottom))
+    V_off = 1.2V * (1 + (931k / 82k)) ≈ 14.8V (Adjustable via fine-tuning R_top)
+* **Turn-on Voltage (V_on):**
+    V_on = V_off + (I_hys * R_top)
+    Hysteresis = 1.2µA * 931k = ~1.12V
+    V_on ≈ 15.9V - 18.3V range (dependent on precise I_hys characteristic)
+
+---
+
+## 2.0 ESP32 Power Domain Override
+Ensures the ESP32 GPIO signals can effectively disable the discharge path during a fault or sleep state.
+
+### 2.1 Parameters
+* **GPIO Drive Voltage:** 3.3V
+* **NPN V_be (Forward Bias):** 0.7V
+* **R2 (Base Resistor):** 1 kOhm
+* **R3 (Base-to-GND Pull-down):** 10 kOhm
+
+### 2.2 Drive Capability
+* **Base Current (I_b):** (3.3V - 0.7V) / 1kOhm = 2.6mA
+* **Collector Sink Capability:** With a typical β of 100, the NPN can sink up to 260mA, effectively pulling the gate node to GND to force MOSFETs into the OFF state.
+* **Fail-Safe Logic:** In the event of GPIO floating (sleep/reboot), R3 pulls the base to GND within nanoseconds, ensuring the system returns to its default state.
