@@ -1,180 +1,46 @@
-# COMET 30: 5S Smart Telemetry BMS (120A Peak)
-**Aerospace-Grade Defensive Engineering | KiCad Design Contest 2026**
+# COMET 30: 5S Intelligent Power Management & Telemetry System
+Custom 5-Cell Lithium Platform featuring a Deterministic Protection Matrix and Deterministic Out-of-Band Telemetry
 
-Most Battery Management Systems are built on hope. The COMET 30 is built on paranoia. 
+![KiCad](https://img.shields.io/badge/KiCad-v8.0-blue?logo=kicad&logoColor=white)
+![Layer Count](https://img.shields.io/badge/Layers-4--Layer-green)
+![Copper Weight](https://img.shields.io/badge/Copper-2oz-orange)
+![Continuous Rating](https://img.shields.io/badge/Continuous_Current-30A-red)
 
-Designed for high-stress 5S lithium packs, this board features a triple-redundant architecture that separates high-speed analog reflexes from digital telemetry. It utilizes a custom "Split-Highway" topology, hardware-level fault latching, an intelligent Wi-Fi ESP32 OS with RTC-persistent energy tracking, and a physical chemical fuse that permanently bricks the battery in the event of catastrophic component failure.
+The COMET 30 is a high-reliability, mixed-signal Battery Management System (BMS) architected for 5-Cell (5S) Lithium-Ion/Lithium-Polymer energy storage systems operating under high transient loads. The system implements an asynchronous, triple-redundant safety topology designed to isolate hard-wired analog fault reflexes from the high-level digital telemetry plane, ensuring structural cell safety even under catastrophic firmware or logic failures.
 
----
+```mermaid
+graph TD
+    subgraph Battery Pack (5S Li-Po)
+        CELLS[Cell Stack 5S]
+    end
 
-## ⚙️ Technical Specification Summary
-| Parameter | Configuration | Value/Spec |
-| :--- | :--- | :--- |
-| **Topology** | Split-Highway | Low-Side Switching + Dedicated High-Side SCP |
-| **Max Continuous Current** | OC1 Threshold | 30A |
-| **Max Transient Peak** | OC2 Threshold | 120A |
-| **Short Circuit Limit** | Hardware Cutoff | 240A |
-| **Charge Cutoff Temp** | Hardware Threshold | ~64.5 deg C |
-| **Active Balance Current** | Per Cell | ~457mA |
+    subgraph Layer 1: Autonomous Analog Protection
+        BM[BM3451 Primary AFE]
+        INF[Parallel Infineon FETs]
+    end
 
----
+    subgraph Layer 2: Embedded Digital Telemetry
+        ESP[ESP32-C3 Microcontroller]
+        INA[INA226 I2C Monitor]
+        ADS[Dual ADS1115 ADCs]
+    end
 
-## 🛠 Hardware Configuration Parameters
+    subgraph Layer 3: Irreversible Active Failsafe
+        BQ[BQ771807 Secondary Overvoltage Monitor]
+        SFK[Dexerials SFK-2045 Chemical Fuse]
+    end
 
-### 1. Current Sense Network (R_sense)
-To achieve the 30A continuous limit (OC1 @ 0.100V), the shunt network is calculated as:
-R_sense = V_OC1 / I_OC1 = 0.100V / 30A = 0.00333 Ohm (3.33 mOhm)
-
-* **Implementation:** Three (3) 10 mOhm precision shunt resistors placed in parallel.
-* **Safety Limits:** * OC1 (30A): 0.100V threshold.
-    * OC2 (120A): 0.400V threshold.
-    * Short Circuit (240A): 0.800V threshold.
-
-### 2. Fault Timing & Delay Network
-To prevent nuisance tripping, the following capacitor network is utilized for the BM3451 delay pins:
-* **Overcharge Delay (T_OV):** 0.22uF (~2.2s)
-* **Over-discharge Delay (T_OVD):** 0.1uF (1.0s)
-* **Discharge Overcurrent 1 Delay (T_OC1):** 1.5uF (3.0s)
-* **Discharge Overcurrent 2 Delay (T_OC2):** 10nF (2ms)
-
-### 3. Thermal Protection Network
-Configured for an MF52D103F3950 NTC thermistor (R_25 = 10kOhm, B = 3950K).
-* **Reference Resistor (R_TRH):** 4.22 kOhm (1% E96).
-* **Charge Cutoff:** ~64.5°C (Derived from R_T at target temperature).
-* **Discharge Hardware Cutoff:** ~83.8°C.
-
-### 4. Active Balancing Network
-Utilizes a resistive bleed architecture to manage cell voltage drift.
-* **Network (R_BAL):** Two (2) 18 Ohm resistors in parallel per cell.
-* **Performance:** 457mA balancing current at 4.120V.
-* **Dissipation:** 1.88W total thermal load (0.94W per resistor).
-* **Component Spec:** 1225 wide-terminal package, minimum 2W power rating.
-
----
-
-## 🔌 System Architecture & Interlocks
-
-* **Primary Safety (BM3451):** Handles OC/SC/OV/UV detection via hard-wired analog logic.
-* **Secondary Logic (ESP32):** Provides I2C telemetry (INA226 current, Dual ADS1115 voltage). Monitors 5x NTC thermistors.
-* **The "Nuke" (Tertiary):** BQ771807 or ESP32 GPIO (PIN_NUKE) triggers an A03400A N-FET to blow a **Dexerials SFK-2045** chemical fuse in the event of MOSFET gate failure or prolonged 120A shorts.
-
----
-
-## 💻 Firmware Flashing & Safety
-
-### UART Programming Header
-Uses 4-pin FTDI interface. **Must use 3.3V logic level.**
-* Pins: `3V3`, `GND`, `RX` (to `TXD0`), `TX` (to `RXD0`).
-
-### Pre-Flight Precautions
-1. **Ground Isolation:** Maintain strict physical separation between `Power_GND` and `Signal_GND` planes. Connect only at the shunt reference point.
-2. **Fuse Caution:** Leave the Dexerials SFK-2045 fuse **un-soldered** during all bench testing.
-3. **Copper Weight:** Board design requires **2oz copper**. 1oz copper will experience catastrophic thermal failure under the 120A transient load.
-
-
-# COMET 30 MOSFET Power Stage: Analysis & Thermal Calculations
-
-This document details the performance and thermal parameters for the parallel MOSFET array utilized in the discharge and charge paths.
-
-## 1.0 MOSFET Array Electrical Performance
-The design utilizes the NTMFS5C670NL (60V, 6.1 mOhm N-Channel) in a 2-parallel configuration for both CHG and DSG paths.
-
-### 1.1 Array Resistance
-* **Single FET R_DS(on):** 6.1 mOhm (at VGS = 10V)
-* **Configuration:** 2 Parallel FETs
-* **Combined Array Resistance:** 6.1 mOhm / 2 = 3.05 mOhm
-
-### 1.2 Continuous Conduction Losses (30A)
-* **Current (I):** 30A
-* **Power Loss (P = I^2 * R):** 30A^2 * 0.00305 Ohm = 2.745 Watts
-* **Dissipation per FET:** 2.745W / 2 = 1.37 Watts
-
-### 1.3 Peak Pulse Performance (120A, 2ms)
-* **Current per FET:** 60A
-* **Resistance (at 60A):** ~5.1 mOhm
-* **Combined Array Resistance:** 2.55 mOhm
-* **Voltage Drop:** 120A * 0.00255 Ohm = 0.306V
-* **Instantaneous Power:** 120A * 0.306V = 36.7 Watts (Total for the array)
-
----
-
-## 2.0 Thermal Analysis
-
-### 2.1 Thermal Resistance
-* **R_thetaJC (Junction-to-Case):** 2.4 °C/W
-* **R_thetaJA (Junction-to-Ambient):** 41 °C/W
-
-### 2.2 Junction Temperature Rise (Steady State, 30A)
-Assuming a standard PCB mounting environment without active cooling:
-* **Power per FET:** 1.37W
-* **Temperature Rise (ΔT):** P * R_thetaJA = 1.37W * 41 °C/W = 56.17 °C
-* **Estimated Junction Temp:** T_ambient + 56.17 °C
-    * *Example:* At 25°C ambient, T_junction ≈ 81.17 °C.
-    * *Safety Status:* Within limits (Operating Junction Temp limit is +175 °C).
-
-### 2.3 Transient Thermal Performance (2ms Peak)
-* **Pulse Duration:** 0.002s
-* **Transient Thermal Impedance (R_thetaJC at 2ms):** Based on the device thermal response curves, the transient impedance at 2ms is significantly lower than the steady-state thermal resistance.
-* **Thermal Impact:** Negligible. The massive thermal mass of the DFN5 package easily absorbs the 36.7W, 2ms pulse without approaching critical junction temperatures.
-
-
-# TPSM65630 Power Module Configuration:
-This document defines the resistor divider values for the TPSM65630 (or equivalent TPSM656x0 family) hardware undervoltage lockout (UVLO) and hysteresis, ensuring the BMS prevents battery over-discharge.
-
-## 1.0 Hardware UVLO Configuration
-Targeting a system shutdown at 15.0V and a restart at 18.25V.
-
-### 1.1 Parameters
-* **V_off (Turn-off Threshold):** 15.0V
-* **V_on (Turn-on Threshold):** 18.25V
-* **V_EN (Internal Enable Threshold):** 1.2V
-* **I_hys (Internal Hysteresis Current):** ~1.2µA
-
-### 1.2 Divider Calculation
-Using the standard resistor divider configuration (R_top from B+ to EN, R_bottom from EN to GND):
-* **R_bottom:** 82 kOhm (Selected standard value)
-* **R_top:** 931 kOhm (Selected standard value, 1% tolerance)
-
-### 1.3 Validation
-* **Turn-off Voltage (V_off):** V_off = V_EN * (1 + (R_top / R_bottom))
-    V_off = 1.2V * (1 + (931k / 82k)) ≈ 14.8V (Adjustable via fine-tuning R_top)
-* **Turn-on Voltage (V_on):**
-    V_on = V_off + (I_hys * R_top)
-    Hysteresis = 1.2µA * 931k = ~1.12V
-    V_on ≈ 15.9V - 18.3V range (dependent on precise I_hys characteristic)
-
----
-
-## 2.0 ESP32 Power Domain Override
-Ensures the ESP32 GPIO signals can effectively disable the discharge path during a fault or sleep state.
-
-### 2.1 Parameters
-* **GPIO Drive Voltage:** 3.3V
-* **NPN V_be (Forward Bias):** 0.7V
-* **R2 (Base Resistor):** 1 kOhm
-* **R3 (Base-to-GND Pull-down):** 10 kOhm
-
-### 2.2 Drive Capability
-* **Base Current (I_b):** (3.3V - 0.7V) / 1 kOhm = 2.6mA
-* **Collector Sink Capability:** With a typical β of 100, the NPN can sink up to 260mA, effectively pulling the gate node to GND to force MOSFETs into the OFF state.
-* **Fail-Safe Logic:** In the event of GPIO floating (sleep/reboot), R3 pulls the base to GND within nanoseconds, ensuring the system returns to its default state.
-
-
-
-
-
-## 💻 The COMET OS (Firmware Features)
-
-* **RTC Persistent Memory:** The ESP32 enters Deep Sleep when current draw drops below 50mA. Cumulative data (Total mAh consumed, Uptime, Sleep time) is stored in the `RTC_DATA_ATTR` domain so it survives CPU shutdown.
-* **Hardware Wakeup:** The INA226 is programmed via I2C registers to pull `GPIO27` LOW when current flows, triggering the ESP32 `ext0` wakeup routine instantly.
-* **Asynchronous Web Server:** The ESP32 broadcasts a JSON endpoint (`/telemetry`) at 10Hz over the `COMET_BMS` network, delivering Live Pack Voltage, Current, Power (W), SoC, and arrays of individual cell voltages and temperatures to ground control.
-* **Remote Override:** Hitting the `/kill` endpoint via Wi-Fi triggers the Soft-Kill NPN transistor.
-
-### Pinout Reference
-* **GPIO21:** I2C SDA (400kHz Fast Mode)
-* **GPIO22:** I2C SCL
-* **GPIO25:** SOFT_KILL (NPN Base)
-* **GPIO26:** NUKE_GPIO (Dexerials Fuse Trigger)
-* **GPIO27:** INA_ALERT (Deep Sleep Wakeup Interrupt)
-* **GPIO32-36:** NTC Thermistors (ADC1 Only)
-
+    CELLS --> BM
+    CELLS --> BQ
+    CELLS --> INA
+    CELLS --> ADS
+    
+    BM -->|Gate Control| INF
+    ESP -->|I2C Telemetry| INA
+    ESP -->|I2C Per-Cell| ADS
+    
+    ESP -->|Software Override| INF
+    
+    BQ -->|Pyrotechnic/Heater Actuation| SFK
+    ESP -->|PIN_NUKE GPIO| SFK
+    SFK -->|Physical Inline Severance| CELLS
