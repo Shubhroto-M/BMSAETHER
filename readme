@@ -1,5 +1,6 @@
+```markdown
 # COMET 30: 5S Intelligent Power Management & Telemetry System
-Custom 5-Cell Lithium Platform featuring a Deterministic Protection Matrix and Deterministic Out-of-Band Telemetry
+Custom 5-Cell Lithium Platform featuring a Deterministic Protection Matrix and Out-of-Band Telemetry
 
 ![KiCad](https://img.shields.io/badge/KiCad-v8.0-blue?logo=kicad&logoColor=white)
 ![Layer Count](https://img.shields.io/badge/Layers-4--Layer-green)
@@ -44,3 +45,197 @@ graph TD
     BQ -->|Pyrotechnic/Heater Actuation| SFK
     ESP -->|PIN_NUKE GPIO| SFK
     SFK -->|Physical Inline Severance| CELLS
+
+```
+
+---
+
+## 1.0 System Architecture & Protection Hierarchy
+
+The platform segregates system isolation and monitoring tasks into three decoupled functional domains:
+
+### 1.1 Layer 1: Autonomous Primary Isolation
+
+The system core relies on the **BM3451 Analog Front-End (AFE)**. This device executes hard-wired, clock-less comparisons of cell potentials and shunt voltage drops to handle basic Overcurrent (OC), Short Circuit (SC), Overvoltage (OV), and Undervoltage (UV) conditions. Control is executed directly via low-side N-channel MOSFET gate modulation.
+
+### 1.2 Layer 2: Out-of-Band Digital Telemetry
+
+An **ESP32-C3 32-bit RISC-V microcontroller** hosts the digital abstraction layer. It reads continuous pack-level current via an **INA226** bi-directional current/power monitor and true per-cell voltage via **Dual ADS1115 16-bit ADCs**. It acts entirely out-of-band; logic hangs or radio dropouts on this layer cannot degrade the primary analog safety loops.
+
+### 1.3 Layer 3: Pyrotechnic/Chemical Tertiary Failsafe
+
+To mitigate catastrophic system failure modes—such as high-current MOSFET migration (welded gates)—the design integrates a **Dexerials SFK-2045 Self-Control Protector**. This active chemical fuse can be triggered independently by a secondary hardware monitor (**TI BQ771807**) or via a dedicated high-integrity GPIO line from the MCU (`PIN_NUKE`), mechanically and permanently severing the main battery connection.
+
+---
+
+## 2.0 Hardware Configuration & Deterministic Math
+
+### 2.1 Current Sense Matrix ($R_{\text{sense}}$)
+
+The overcurrent detection relies on a precision low-side Kelvin-connected shunt network. To achieve a target continuous threshold of $30\text{A}$ ($OC_1$) matching the AFE internal threshold of $V_{\text{OC1}} = 0.100\text{V}$, the total shunt resistance is defined as:
+
+$$R_{\text{sense}} = \frac{V_{\text{OC1}}}{I_{\text{OC1}}} = \frac{0.100\text{V}}{30\text{A}} = 0.00333\ \Omega\ (3.33\text{ m}\Omega)$$
+
+* **Implementation:** Three (3) $10\text{ m}\Omega$, $1\%$ tolerance, low thermal EMF resistors configured in a parallel array.
+* **Hardware Trigger Boundaries:**
+* **$OC_1$ (Continuous Overcurrent):** $30\text{A}$ at $\Delta V_{\text{shunt}} = 0.100\text{V}$
+* **$OC_2$ (Transient Peak Limit):** $120\text{A}$ at $\Delta V_{\text{shunt}} = 0.400\text{V}$
+* **$SC$ (Short Circuit Cutoff):** $240\text{A}$ at $\Delta V_{\text{shunt}} = 0.800\text{V}$
+
+
+
+### 2.2 Time-Delay Constant Configuration
+
+To filter transient switching induction and high-torque motor inrush spikes, the BM3451 RC delay pins are calculated as follows:
+
+* **Overcharge Delay ($T_{\text{OV}}$):** $C = 0.22\ \mu\text{F} \implies \approx 2.2\text{ s}$
+* **Over-discharge Delay ($T_{\text{OVD}}$):** $C = 0.1\ \mu\text{F} \implies \approx 1.0\text{ s}$
+* **Discharge Overcurrent 1 Delay ($T_{\text{OC1}}$):** $C = 1.5\ \mu\text{F} \implies \approx 3.0\text{ s}$
+* **Discharge Overcurrent 2 Delay ($T_{\text{OC2}}$):** $C = 10\text{ nF} \implies \approx 2\text{ ms}$
+
+### 2.3 High-Current Passive Dissipative Balancing Matrix
+
+Cell balancing utilizes external N-FETs switched via the BM3451 cell-balance drivers to channel bypass current around lagging cells during the float phase.
+
+* **Bypass Load Geometry:** Two (2) $18\ \Omega$ power resistors placed in parallel per cell channel, yielding an equivalent channel resistance of $R_{\text{eq}} = 9\ \Omega$.
+* **Balancing Current Performance at $V_{\text{cell}} = 4.120\text{V}$:**
+
+$$I_{\text{bal}} = \frac{V_{\text{cell}}}{R_{\text{eq}}} = \frac{4.120\text{V}}{9\ \Omega} \approx 457.7\text{ mA}$$
+
+* **Thermal Energy Dissipation:** 
+$$P_{\text{diss}} = I_{\text{bal}}^2 \times R_{\text{eq}} = (0.4577\text{A})^2 \times 9\ \Omega \approx 1.88\text{W total per channel}$$
+
+
+
+> [!CRITICAL]
+> Each balancing resistor must be an ultra-wide terminal **1225 package** rated for a minimum of $2\text{W}$ continuous power dissipation. High thermal-via distribution density to internal inner layers is mandatory to mitigate layout localization hotspots.
+
+### 2.4 Thermal Sensing Networks
+
+Configured around an MF52D103F3950 NTC thermistor ($R_{25} = 10\text{ k}\Omega$, $\beta = 3950\text{K}$) mated to a precision $4.22\text{ k}\Omega$ $1\%$ E96 reference pull-up resistor ($R_{\text{TRH}}$).
+
+* **Charge Fault Lockout Threshold:** $\approx 64.5^\circ\text{C}$
+* **Discharge Fault Lockout Threshold:** $\approx 83.8^\circ\text{C}$
+
+---
+
+## 3.0 MOSFET Power Stage & Thermal Dynamics
+
+The switching backplane employs the **NTMFS5C670NL** (60V, $6.1\text{ m}\Omega$ typical at $V_{\text{GS}} = 10\text{V}$) arranged in a 2-parallel configuration for both the charge (CHG) and discharge (DSG) paths.
+
+### 3.1 Conduction Loss Metrics
+
+* **Total Array Static On-Resistance ($R_{\text{DS(on) Array}}$):** $\frac{6.1\text{ m}\Omega}{2} = 3.05\text{ m}\Omega$
+* **Continuous Dissipation ($I = 30\text{A}$):**
+
+$$P_{\text{conduction}} = I^2 \times R_{\text{DS(on) Array}} = 30\text{A}^2 \times 0.00305\ \Omega = 2.745\text{ Watts}$$
+
+$$\text{Power per Device} = \frac{2.745\text{W}}{2} = 1.3725\text{ Watts}$$
+
+### 3.2 Junction Temperature Evaluation
+
+Assuming standard mounting to a 4-layer FR4 substrate without active convection cooling ($R_{\theta\text{JA}} = 41^\circ\text{C/W}$):
+
+$$\Delta T_{\text{junction}} = P_{\text{device}} \times R_{\theta\text{JA}} = 1.3725\text{W} \times 41^\circ\text{C/W} \approx 56.27^\circ\text{C}$$
+
+$$T_{\text{junction}} = T_{\text{ambient}} + \Delta T_{\text{junction}} = 25^\circ\text{C} + 56.27^\circ\text{C} = 81.27^\circ\text{C}$$
+
+* **Status Evaluation:** Fully stable. $T_{\text{junction}}$ maintains a safety margin of $93.73^\circ\text{C}$ below the absolute maximum operating silicon junction temperature limit of $+175^\circ\text{C}$.
+
+### 3.3 Transient Peak Surge Performance
+
+* **Transient Pulse Bounds:** $120\text{A}$ for a $2\text{ms}$ duration window.
+* **Silicon Core Integrity:** Under peak transients, individual device current scales to $60\text{A}$, yielding an instantaneous array power spike of $36.7\text{W}$. The structural thermal mass of the DFN5 package configuration safely absorbs this short-duration energy dump without surpassing safe critical junction thresholds.
+
+---
+
+## 4.0 System Power Domain & UVLO (TPSM65630)
+
+To avoid system brownouts and control loop instabilities, the system's low-voltage buck module requires specific hardware-level Under-Voltage Lockout (UVLO) setpoints. The system target dictates a strict shutdown at $15.0\text{V}$ and clearance for restart at $18.25\text{V}$.
+
+Given the TPSM65630 characteristics ($V_{\text{EN}} = 1.2\text{V}$ internal reference threshold, $I_{\text{hys}} = 1.2\ \mu\text{A}$ source current):
+
+```
+       B+ (Pack Positive)
+       │
+      ┌┴┐
+      │ │ R_top = 2.7 MΩ
+      └┬┘
+       ├─────── EN Pin (Internal Threshold = 1.2V, Hysteresis = 1.2µA)
+      ┌┴┐
+      │ │ R_bottom = 237 kΩ
+      └┬┘
+       │
+      ─── GND
+
+```
+
+* **Selected Design Matrix:** $R_{\text{top}} = 2.7\text{ M}\Omega$, $R_{\text{bottom}} = 237\text{ k}\Omega$ (1% E96 standard series).
+* **Calculated Lower Cutoff Potential ($V_{\text{off}}$):**
+
+$$V_{\text{off}} = V_{\text{EN}} \times \left(1 + \frac{R_{\text{top}}}{R_{\text{bottom}}}\right) = 1.2\text{V} \times \left(1 + \frac{2.7\text{ M}\Omega}{237\text{ k}\Omega}\right) \approx 14.89\text{V}$$
+
+* **Calculated Upper Awakening Potential ($V_{\text{on}}$):**
+
+$$V_{\text{on}} = V_{\text{off}} + (I_{\text{hys}} \times R_{\text{top}}) = 14.89\text{V} + (1.2\ \mu\text{A} \times 2.7\text{ M}\Omega) \approx 18.13\text{V}$$
+
+### 4.2 Digital Domain Drive Interlocking
+
+To ensure software commands can override the primary power distribution pipeline without creating vulnerable high-impedance states:
+
+* **Base Drive Interconnect:** A $1\text{ k}\Omega$ current-limiting base resistor matched to a hard-tied $10\text{ k}\Omega$ base-to-GND static pull-down resistor driving an active NPN switching element.
+* **Current Sinking Capability:** The $3.3\text{V}$ logic output provides a clean $2.6\text{ mA}$ forward base current, forcing the NPN transistor collector to safely sink up to $260\text{ mA}$. This actively shorts the primary MOSFET gates down to $GND$ potential within nanoseconds.
+* **Fail-Safe Operational Fallback:** If the MCU hits a watch-dog reset, loses voltage, or boots incorrectly, the physical $10\text{ k}\Omega$ pull-down discharges the NPN base gate, cleanly returning the board back to the control authority of the autonomous analog AFE.
+
+---
+
+## 5.0 Firmware Architecture: The COMET OS
+
+The ESP32-C3 executes an event-driven asynchronous loop designed to log telemetry without introducing blocking timing penalties to the communication stack.
+
+* **State Persistence:** When the INA226 registers a system-wide current draw of $<50\text{mA}$ for a prolonged period, the MCU writes active state attributes (`mAh_consumed`, `State_of_Health`, `operational_uptime`) into the `RTC_DATA_ATTR` memory segment and enters Deep Sleep.
+* **Asynchronous Hardware Interrupts:** The INA226 ALERT pin is mapped directly to `GPIO27`. Any current transient crossing the programmatic sleep threshold drops the line low, asserting a hardware `ext0` wakeup interrupt that restores the CPU core to execution mode within microseconds.
+* **Outbound Telemetry Stream:** The firmware establishes an independent asynchronous WebSocket server streaming a condensed JSON string over a local Wi-Fi link at a fixed rate of $10\text{Hz}$:
+
+```json
+{
+  "pack_v": 20.61,
+  "pack_a": 24.85,
+  "pack_w": 512.15,
+  "soc": 94.2,
+  "cell_v": [4.122, 4.121, 4.123, 4.122, 4.123],
+  "temp_c": [42.1, 41.8, 42.5, 51.2, 31.4]
+}
+
+```
+
+### 5.2 Microcontroller Pin Mapping
+
+* **GPIO21 / GPIO22:** I2C SDA / SCL (400kHz Fast Mode Specification)
+* **GPIO25:** SOFT_KILL Output Pin (Direct NPN Base Drive Interface)
+* **GPIO26:** NUKE_GPIO Output Pin (Dexerials Active Element Commutator)
+* **GPIO27:** INA_ALERT Input Pin (Deep Sleep Asynchronous Wakeup Interrupt Line)
+* **GPIO32 - GPIO36:** NTC Thermistor Array Sub-Channels (ADC1 Input Mapping)
+
+---
+
+## 6.0 Flashing & Lab Safety Protocols
+
+### 6.1 Hardware Programming Interface
+
+Firmware flashing must be conducted using a dedicated, isolated 4-pin FTDI hardware interface.
+
+> [!WARNING]
+> The target microcontroller operates strictly on a **3.3V logic domain**. Applying a 5V logic level to the programming header will cause immediate dielectric breakdown of the internal radio structures.
+
+* **Pin Mapping Configuration:** `3V3` | `GND` | `RXD0` (Connects to target TX) | `TXD0` (Connects to target RX)
+
+### 6.2 Pre-Flight Lab Safety Constraints
+
+1. **Galvanic Isolation Boundaries:** Ensure complete layout separation between high-current `Power_GND` planes and internal low-noise logic `Signal_GND` planes. They must form a strict single-point union at the kelvin connection nodes of the shunt resistors.
+2. **Pyrotechnic Fuse Safe-State:** The **Dexerials SFK-2045 chemical fuse must remain un-soldered** during all initial debugging, validation, and firmware optimization cycles to prevent accidental deployment of the non-reversible chemical element.
+3. **Substrate Requirements:** This system cannot be safely manufactured on standard 1oz copper stacks. Subjecting a 1oz copper trace geometry to the specified $120\text{A}$ transient peak window will trigger an instantaneous, catastrophic thermal fuse element event within the FR4 layer trace paths. **Minimum requirement: 2oz copper weight.**
+
+```
+
+```
